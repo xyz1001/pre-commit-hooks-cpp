@@ -1,0 +1,6 @@
+- id: check-commit-msg
+  name: check commit message
+  entry: check-commit-msg
+  description: 检查提交内容是否符合规范
+  language: python
+  stages: [commit-msg]
