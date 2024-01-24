@@ -8,10 +8,13 @@ pre-commit-hooks-cpp
 将以下代码添加到项目根目录下的`.pre-commit-config.yaml`文件中
 
 ```yaml
--   repo: https://github.com/xyz1001/pre-commit-hooks-cpp
+default_install_hook_types: [pre-commit, commit-msg]
+repos:
+  - repo: https://github.com/xyz1001/pre-commit-hooks-cpp
     rev: v1.0.0
     hooks:
     -   id: check-commit-msg
+        args: ['(?:^\[(?:(?:feature)|(?:chore)|(?:refactor)|(?:revert)|(?:test)|(?:doc)|(?:style))\]\[\d+\.\d+\.\d+\](?:\[[A-Z]+\-\d+\])? .+(?:\n^why: .*)?(?:\n^how: .*)?(?:\n^influence: .*)?$)|(?:^\[bugfix\]\[\d+\.\d+\.\d+\](?:\[[A-Z]+\-\d+\])? .+\n^why: .+\n^how: .+\n^influence: .+$)']
 ```
 
 ### 可用hook
