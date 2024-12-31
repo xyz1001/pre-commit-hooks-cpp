@@ -11,14 +11,14 @@ def main(argv: list[str] = sys.argv) -> int:
 
     result = from_path(Path(filepath)).best()
     if result.encoding not in ('utf_8', 'ascii') or result.bom:
-        print('提交信息字符编码应使用UTF-8 without BOM，当前为 %s' % result.encoding)
+        print(f'The text codec of commit message should be UTF-8 without BOM, current text codec is {result.encoding}')
 
     with open(filepath, 'r',  encoding='utf-8') as f:
         content = f.read()
 
     matches = re.match(regex, content, re.MULTILINE)
     if not matches:
-        print('提交信息不符合提交规范')
+        print(f'The commit message is not match the check rule\n{content}')
         return -1
 
     return 0
