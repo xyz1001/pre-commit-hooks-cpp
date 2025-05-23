@@ -4,3 +4,8 @@
   description: 检查提交内容是否符合规范
   language: python
   stages: [commit-msg]
+- id: check-linebreak
+  name: check linebreak
+  entry: check-linebreak
+  description: 检查换行符是否为LF
+  language: python
