@@ -9,8 +9,10 @@
   entry: check-linebreak
   description: 检查换行符是否为LF
   language: python
+  types: [text]
 - id: check-utf8
   name: check utf8
   entry: check-utf8
   description: 检查文件是否为UTF-8编码
   language: python
+  types: [text]
