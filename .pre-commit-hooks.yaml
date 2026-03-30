@@ -16,3 +16,9 @@
   description: 检查文件是否为UTF-8编码
   language: python
   types: [text]
+- id: check-version
+  name: check version
+  entry: check-version
+  description: 检查版本号是否正确（提交信息与版本文件匹配，版本号递增合法）
+  language: python
+  stages: [commit-msg]

@@ -10,6 +10,7 @@
 - ✅ **提交信息规范检查** - 确保提交信息符合团队规范
 - ✅ **换行符检查** - 检测并防止 Windows 风格换行符（CRLF）混入
 - ✅ **UTF-8 编码检查** - 确保源代码文件使用 UTF-8 编码
+- ✅ **版本号检查** - 确保提交信息中的版本号与版本文件一致，且版本递增合法
 - 🚀 **易于集成** - 基于 pre-commit 框架，配置简单
 - 🔧 **高度可定制** - 支持通过参数自定义检查规则
 
@@ -36,14 +37,15 @@ pip install pre-commit
 default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/xyz1001/pre-commit-hooks-cpp
-    rev: v1.0.2  # 使用最新版本
+    rev: v1.1.0  # 使用最新版本
     hooks:
       - id: check-commit-msg
       - id: check-linebreak
       - id: check-utf8
+      - id: check-version
 ```
 
-然后安装 hooks：
+然后安装 hooks：：
 
 ```bash
 pre-commit install
@@ -116,13 +118,67 @@ influence: 影响核心模块稳定性
 - 防止编码问题导致的编译错误
 - 可通过 `files` 参数指定要检查的文件类型
 
-## 完整配置示例
+### `check-version`
+
+检查提交信息中的版本号是否正确。
+
+**检查规则：**
+1. 提交信息中必须包含方括号包围的版本号（如 `[1.0.0]`）
+2. 提交信息中的版本号必须与版本文件中的版本号一致
+3. 当前提交版本号相比上一次提交，有且仅有一位增加了 1
+4. 如果高位增加了 1，所有低位必须置为 0
+
+**配置示例：**
+
+```yaml
+# 示例 1: conanfile.py 中 version = "x.y.z" 格式
+- id: check-version
+  args:
+    - --version-file=conanfile.py
+    - --version-regex=^\s*version\s*=\s*["'](\d+(?:\.\d+)+)["']
+
+# 示例 2: version.properties 中 version=x.y.z 格式
+- id: check-version
+  args:
+    - --version-file=version.properties
+    - --version-regex=^\s*version\s*=\s*(\d+(?:\.\d+)+)
+
+# 示例 3: 版本号分开存储（如 major=1, minor=0, patch=0）
+- id: check-version
+  args:
+    - --version-file=version.properties
+    - --version-regex=major=(\d+).*minor=(\d+).*patch=(\d+)
+```
+
+**参数说明：**
+- `--version-file`: 版本文件路径（必需）
+- `--version-regex`: 提取版本号的正则表达式（必需）
+  - 单个捕获组：直接作为版本号
+  - 多个捕获组：各组用 `.` 连接（如 `(1)(0)(0)` → `1.0.0`）
+
+**说明：**
+- 支持任意位数的版本号（如 `1.0.0`、`1.0.0.0.1`）
+- 首次提交（无历史提交）时跳过版本递增检查
+- 正则表达式默认使用 `re.MULTILINE` 模式
+
+**合法的版本递增示例：**
+
+| 上一次版本 | 当前版本 | 是否合法 |
+|-----------|---------|---------|
+| 1.0.0 | 1.0.1 | ✅ |
+| 1.0.0 | 1.1.0 | ✅ |
+| 1.0.0 | 2.0.0 | ✅ |
+| 1.0.0 | 1.0.2 | ❌ 增加了 2 |
+| 1.0.0 | 1.1.1 | ❌ 高位增加后低位未置 0 |
+| 1.0.0 | 0.0.1 | ❌ 高位降低 |
+| 1.0.0.0.1 | 1.0.0.0.2 | ✅ |
+| 1.0.0.0.1 | 1.1.0.0.0 | ✅ |
 
 ```yaml
 default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/xyz1001/pre-commit-hooks-cpp
-    rev: v1.0.2
+    rev: v1.1.0
     hooks:
       # 检查提交信息格式
       - id: check-commit-msg
@@ -137,6 +193,12 @@ repos:
       - id: check-utf8
         types: [text]
         files: \.(cpp|cc|c|h|hpp)$
+      
+      # 检查版本号
+      - id: check-version
+        args:
+          - --version-file=conanfile.py
+          - --version-regex=^\s*version\s*=\s*["'](\d+(?:\.\d+)+)["']
 ```
 
 ## 依赖
