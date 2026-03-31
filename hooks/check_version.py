@@ -147,6 +147,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     commit_msg = commit_msg_file.read_text(encoding="utf-8")
+
+    if commit_msg.lstrip().lower().startswith("fixup!"):
+        return 0
+
     commit_version = extract_version_from_commit_msg(commit_msg)
     if not commit_version:
         print("Error: no version found in commit message (expected [x.y.z] format)")

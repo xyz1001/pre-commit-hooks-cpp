@@ -37,7 +37,7 @@ pip install pre-commit
 default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/xyz1001/pre-commit-hooks-cpp
-    rev: v1.1.0  # 使用最新版本
+    rev: v1.1.1  # 使用最新版本
     hooks:
       - id: check-commit-msg
       - id: check-linebreak
@@ -178,7 +178,7 @@ influence: 影响核心模块稳定性
 default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/xyz1001/pre-commit-hooks-cpp
-    rev: v1.1.0
+    rev: v1.1.1
     hooks:
       # 检查提交信息格式
       - id: check-commit-msg
