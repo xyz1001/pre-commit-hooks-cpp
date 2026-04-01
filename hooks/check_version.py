@@ -105,7 +105,12 @@ def validate_version_increment(prev: str, curr: str) -> str | None:
             )
 
     if incremented_index == -1:
-        return f"Version not incremented: {prev} -> {curr}"
+        print(
+            f"Warning: version not incremented: {prev} -> {curr}\n"
+            f"  This is expected only for `git commit --amend`.\n"
+            f"  If this is a new commit, please increment the version."
+        )
+        return None
 
     for i in range(incremented_index + 1, len(curr_parts)):
         if curr_parts[i] != 0:
