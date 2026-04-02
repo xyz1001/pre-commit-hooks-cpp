@@ -41,9 +41,10 @@ def get_previous_commit_version() -> str | None:
             ["git", "log", "-1", "--format=%B", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
-        return extract_version_from_commit_msg(result.stdout)
+        return extract_version_from_commit_msg(result.stdout or "")
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
 
