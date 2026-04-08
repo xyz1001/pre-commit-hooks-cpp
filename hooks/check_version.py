@@ -7,7 +7,6 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 
 
 COMMIT_VERSION_PATTERN = re.compile(r"\[(\d+(?:\.\d+)+)\]")
@@ -19,13 +18,29 @@ def extract_version_from_commit_msg(text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def extract_version_from_file(filepath: Path, pattern: str) -> str | None:
+def git_run(*cmd: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *cmd],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def extract_version_from_file(filepath: str, pattern: str) -> str | None:
     """用正则从文件中提取版本号。
 
     单个捕获组 → 直接作为版本号；
     多个捕获组 → 各组用 '.' 连接组成版本号。
     """
-    content = filepath.read_text(encoding="utf-8")
+    content = git_run("show", f"HEAD:{filepath}")
+    if content is None:
+        return None
     match = re.search(pattern, content, re.MULTILINE)
     if not match:
         return None
@@ -36,17 +51,10 @@ def extract_version_from_file(filepath: Path, pattern: str) -> str | None:
 
 
 def get_previous_commit_version() -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "log", "-1", "--format=%B", "HEAD"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=True,
-        )
-        return extract_version_from_commit_msg(result.stdout or "")
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    msg = git_run("log", "-1", "--format=%B", "HEAD~1")
+    if not msg:
         return None
+    return extract_version_from_commit_msg(msg)
 
 
 def parse_version(version_str: str) -> list[int]:
@@ -106,12 +114,7 @@ def validate_version_increment(prev: str, curr: str) -> str | None:
             )
 
     if incremented_index == -1:
-        print(
-            f"Warning: version not incremented: {prev} -> {curr}\n"
-            f"  This is expected only for `git commit --amend`.\n"
-            f"  If this is a new commit, please increment the version."
-        )
-        return None
+        return f"Version not incremented: {prev} -> {curr}"
 
     for i in range(incremented_index + 1, len(curr_parts)):
         if curr_parts[i] != 0:
@@ -141,18 +144,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "multiple capture groups = joined by '.'"
         ),
     )
-    parser.add_argument(
-        "commit_msg_file",
-        help="path to the commit message file (passed by pre-commit)",
-    )
     args = parser.parse_args(argv)
 
-    commit_msg_file = Path(args.commit_msg_file)
-    if not commit_msg_file.exists():
-        print(f"Error: commit message file not found: {commit_msg_file}")
-        return 1
-
-    commit_msg = commit_msg_file.read_text(encoding="utf-8")
+    commit_msg = git_run("log", "-1", "--format=%B", "HEAD")
+    if not commit_msg:
+        return 0
 
     if commit_msg.lstrip().lower().startswith("fixup!"):
         return 0
@@ -162,24 +158,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Error: no version found in commit message (expected [x.y.z] format)")
         return 1
 
-    version_file = Path(args.version_file)
-    if not version_file.exists():
-        print(f"Error: version file not found: {version_file}")
-        return 1
-
-    file_version = extract_version_from_file(version_file, args.version_regex)
+    file_version = extract_version_from_file(args.version_file, args.version_regex)
     if not file_version:
         print(
-            f"Error: no version matched in {version_file} "
+            f"Error: no version matched in {args.version_file} "
             f"with regex: {args.version_regex}"
         )
         return 1
 
     if commit_version != file_version:
         print(
-            f"Error: version mismatch between commit message and {version_file}\n"
+            f"Error: version mismatch between commit message and {args.version_file}\n"
             f"  commit message: {commit_version}\n"
-            f"  {version_file}: {file_version}"
+            f"  {args.version_file}: {file_version}"
         )
         return 1
 

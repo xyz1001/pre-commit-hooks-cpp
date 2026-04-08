@@ -34,7 +34,7 @@ pip install pre-commit
 在项目根目录创建 `.pre-commit-config.yaml` 文件，添加以下配置：
 
 ```yaml
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, post-commit]
 repos:
   - repo: https://github.com/xyz1001/pre-commit-hooks-cpp
     rev: v1.1.1  # 使用最新版本
@@ -45,11 +45,12 @@ repos:
       - id: check-version
 ```
 
-然后安装 hooks：：
+然后安装 hooks：
 
 ```bash
 pre-commit install
 pre-commit install --hook-type commit-msg
+pre-commit install --hook-type post-commit
 ```
 
 ## 可用 Hooks
@@ -120,13 +121,14 @@ influence: 影响核心模块稳定性
 
 ### `check-version`
 
-检查提交信息中的版本号是否正确。
+在提交创建后（post-commit）检查当前提交的版本号是否正确。
 
 **检查规则：**
 1. 提交信息中必须包含方括号包围的版本号（如 `[1.0.0]`）
-2. 提交信息中的版本号必须与版本文件中的版本号一致
+2. 提交信息中的版本号必须与该提交中版本文件的版本号一致
 3. 当前提交版本号相比上一次提交，有且仅有一位增加了 1
 4. 如果高位增加了 1，所有低位必须置为 0
+5. `fixup!` 开头的提交会被跳过
 
 **配置示例：**
 
@@ -157,6 +159,8 @@ influence: 影响核心模块稳定性
   - 多个捕获组：各组用 `.` 连接（如 `(1)(0)(0)` → `1.0.0`）
 
 **说明：**
+- 运行在 `post-commit` 阶段，比较当前提交与上一个提交的版本号
+- 支持 `git commit --amend` 和 `git rebase` 场景
 - 支持任意位数的版本号（如 `1.0.0`、`1.0.0.0.1`）
 - 首次提交（无历史提交）时跳过版本递增检查
 - 正则表达式默认使用 `re.MULTILINE` 模式
@@ -175,7 +179,7 @@ influence: 影响核心模块稳定性
 | 1.0.0.0.1 | 1.1.0.0.0 | ✅ |
 
 ```yaml
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, post-commit]
 repos:
   - repo: https://github.com/xyz1001/pre-commit-hooks-cpp
     rev: v1.1.1

@@ -21,4 +21,5 @@
   entry: check-version
   description: 检查版本号是否正确（提交信息与版本文件匹配，版本号递增合法）
   language: python
-  stages: [commit-msg]
+  stages: [post-commit]
+  always_run: true
