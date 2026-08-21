@@ -11,6 +11,7 @@
 - ✅ **换行符检查** - 检测并防止 Windows 风格换行符（CRLF）混入
 - ✅ **UTF-8 编码检查** - 确保源代码文件使用 UTF-8 编码
 - ✅ **版本号检查** - 确保提交信息中的版本号与版本文件一致，且版本递增合法
+- ✅ **Qt AutoUIC include 路径检查** - 确保 `ui_*.h` include 有对应的 `.ui` 文件
 - 🚀 **易于集成** - 基于 pre-commit 框架，配置简单
 - 🔧 **高度可定制** - 支持通过参数自定义检查规则
 
@@ -43,6 +44,8 @@ repos:
       - id: check-linebreak
       - id: check-utf8
       - id: check-version
+      - id: check-autouic-include-path
+        args: [--source-root, src]
 ```
 
 然后安装 hooks：
@@ -165,6 +168,19 @@ influence: 影响核心模块稳定性
 - 首次提交（无历史提交）时跳过版本递增检查
 - 正则表达式默认使用 `re.MULTILINE` 模式
 
+### `check-autouic-include-path`
+
+递归检查 `--source-root`（相对项目根目录）下的 C/C++ 源文件和头文件，确保每个引号形式的 `#include "<relative-path>/ui_<name>.h"` 都有对应的 `<source-root>/<relative-path>/<name>.ui` 文件。裸路径 `#include "ui_<name>.h"` 对应 `<source-root>/<name>.ui`。尖括号 include 和非 `ui_*.h` include 不检查。
+
+**配置示例：**
+
+```yaml
+- id: check-autouic-include-path
+  args: [--source-root, src]
+```
+
+`--source-root` 为必填参数，且必须是相对当前工作目录的已存在目录。该 hook 使用 `always_run: true` 和 `pass_filenames: false`，因此仅修改 `.ui` 文件时也会执行检查。当推导出的 UI 路径不存在时，hook 会搜索同名 `.ui` 文件：唯一候选会报告 AUTOUIC include 路径不匹配、实际 UI 路径和完整的建议 include；没有候选会报告 UI 文件不存在；多个候选会报告歧义并列出所有候选路径。
+
 **合法的版本递增示例：**
 
 | 上一次版本 | 当前版本 | 是否合法 |
@@ -187,17 +203,17 @@ repos:
       # 检查提交信息格式
       - id: check-commit-msg
         args: ['^\[(?:feature|bugfix|chore|refactor|doc|test|style)\]\[v?\d+\.\d+\.\d+\].*']
-      
+
       # 检查 C/C++ 源文件的换行符
       - id: check-linebreak
         types: [text]
         files: \.(cpp|cc|c|h|hpp)$
-      
+
       # 检查 C/C++ 源文件的编码
       - id: check-utf8
         types: [text]
         files: \.(cpp|cc|c|h|hpp)$
-      
+
       # 检查版本号
       - id: check-version
         args:

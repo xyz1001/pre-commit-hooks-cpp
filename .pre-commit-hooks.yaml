@@ -23,3 +23,11 @@
   language: python
   stages: [post-commit]
   always_run: true
+- id: check-autouic-include-path
+  name: check autouic include path
+  entry: check-autouic-include-path
+  description: 检查 ui_*.h include 是否有对应的 Qt .ui 文件
+  language: python
+  stages: [pre-commit]
+  always_run: true
+  pass_filenames: false
