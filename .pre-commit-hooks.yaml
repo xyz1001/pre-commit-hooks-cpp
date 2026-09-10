@@ -21,7 +21,7 @@
   entry: check-version
   description: 检查版本号是否正确（提交信息与版本文件匹配，版本号递增合法）
   language: python
-  stages: [post-commit]
+  stages: [commit-msg, post-commit]
   always_run: true
 - id: check-autouic-include-path
   name: check autouic include path
@@ -31,3 +31,20 @@
   stages: [pre-commit]
   always_run: true
   pass_filenames: false
+- id: conan-version-merge-driver
+  name: conan version merge driver
+  entry: conan-version-merge-driver
+  description: Reapply rebased semantic-version bumps
+  language: python
+  stages: [manual]
+  pass_filenames: true
+  require_serial: true
+  always_run: true
+- id: conan-version-post-rewrite
+  name: conan version post rewrite
+  entry: conan-version-post-rewrite
+  description: Normalize semantic versions after rebase
+  language: python
+  stages: [post-rewrite]
+  pass_filenames: false
+  always_run: true

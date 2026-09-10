@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 
 COMMIT_VERSION_PATTERN = re.compile(r'\[(\d+(?:\.\d+)+)\]')
@@ -32,13 +33,23 @@ def git_run(*cmd: str) -> str | None:
         return None
 
 
-def extract_version_from_file(filepath: str, pattern: str) -> str | None:
+def is_rebase_in_progress() -> bool:
+    for rebase_directory in ('rebase-merge', 'rebase-apply'):
+        path = git_run('rev-parse', '--git-path', rebase_directory)
+        if path and Path(path).exists():
+            return True
+    return False
+
+
+def extract_version_from_file(
+        filepath: str, pattern: str, from_index: bool = False) -> str | None:
     """用正则从文件中提取版本号。
 
     单个捕获组 → 直接作为版本号；
     多个捕获组 → 各组用 '.' 连接组成版本号。
     """
-    content = git_run('show', f"HEAD:{filepath}")
+    file_ref = f':{filepath}' if from_index else f'HEAD:{filepath}'
+    content = git_run('show', file_ref)
     if content is None:
         return None
     match = re.search(pattern, content, re.MULTILINE)
@@ -126,7 +137,8 @@ def validate_version_increment(prev: str, curr: str) -> str | None:
     return None
 
 
-def _fatal(error_detail: str, remediation_hint: str = '') -> int:
+def _fatal(
+        error_detail: str, remediation_hint: str = '', commit_created: bool = True) -> int:
     """Print a prominent, non-ignorable error banner and return exit-code 1.
 
     Because this hook runs at the *post-commit* stage, the commit has
@@ -140,6 +152,17 @@ def _fatal(error_detail: str, remediation_hint: str = '') -> int:
 
     Ignoring this error and continuing is **NOT** acceptable.
     """
+    if not commit_created:
+        print(
+            f'\nVERSION CHECK FAILED\n\n'
+            f'{error_detail}\n'
+            f'{remediation_hint}\n\n'
+            f'The commit has not been created. Fix the commit message or staged '
+            f'version file, then retry the commit.\n',
+            file=sys.stderr,
+        )
+        return 1
+
     separator = '!' * 72
     extra = f"\n  Hint: {remediation_hint}" if remediation_hint else ''
     print(
@@ -189,7 +212,67 @@ def main(argv: Sequence[str] | None = None) -> int:
             "multiple capture groups = joined by '.'"
         ),
     )
+    parser.add_argument(
+        '--fix-commit-message',
+        action='store_true',
+        help='synchronize the commit message version tag with the version file',
+    )
+    parser.add_argument(
+        'commit_msg_file',
+        nargs='?',
+        help='commit message file passed by the commit-msg hook stage',
+    )
     args = parser.parse_args(argv)
+
+    if args.commit_msg_file:
+        if not args.fix_commit_message:
+            return 0
+        try:
+            with open(args.commit_msg_file, encoding='utf-8') as message_file:
+                commit_msg = message_file.read()
+        except OSError:
+            return _fatal(
+                f'Unable to read commit message file: {args.commit_msg_file}',
+                commit_created=False,
+            )
+
+        if commit_msg.lstrip().lower().startswith('fixup!'):
+            return 0
+
+        commit_version = extract_version_from_commit_msg(commit_msg)
+        if not commit_version:
+            return _fatal(
+                'No version found in commit message (expected [x.y.z] format).',
+                'Include a version tag like [1.2.3] in your commit message.',
+                commit_created=False,
+            )
+
+        file_version = extract_version_from_file(
+            args.version_file, args.version_regex, from_index=True)
+        if not file_version:
+            return _fatal(
+                f"No version matched in {args.version_file} "
+                f"with regex: {args.version_regex}",
+                f"Ensure {args.version_file} contains a version that matches "
+                f"the expected pattern.",
+                commit_created=False,
+            )
+
+        if commit_version != file_version:
+            commit_msg = COMMIT_VERSION_PATTERN.sub(
+                f'[{file_version}]', commit_msg, count=1)
+            try:
+                with open(args.commit_msg_file, 'w', encoding='utf-8') as message_file:
+                    message_file.write(commit_msg)
+            except OSError:
+                return _fatal(
+                    f'Unable to write commit message file: {args.commit_msg_file}',
+                    commit_created=False,
+                )
+        return 0
+
+    if args.fix_commit_message and is_rebase_in_progress():
+        return 0
 
     commit_msg = git_run('log', '-1', '--format=%B', 'HEAD')
     if not commit_msg:

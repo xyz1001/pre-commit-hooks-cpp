@@ -124,7 +124,7 @@ influence: 影响核心模块稳定性
 
 ### `check-version`
 
-在提交创建后（post-commit）检查当前提交的版本号是否正确。
+在提交信息创建阶段（commit-msg）同步版本号，并在提交创建后（post-commit）检查当前提交的版本号是否正确。
 
 **检查规则：**
 1. 提交信息中必须包含方括号包围的版本号（如 `[1.0.0]`）
@@ -141,6 +141,13 @@ influence: 影响核心模块稳定性
   args:
     - --version-file=conanfile.py
     - --version-regex=^\s*version\s*=\s*["'](\d+(?:\.\d+)+)["']
+
+# 示例 1a: 自动同步提交信息中的首个版本标记
+- id: check-version
+  args:
+    - --version-file=conanfile.py
+    - --version-regex=^\s*version\s*=\s*["'](\d+(?:\.\d+)+)["']
+    - --fix-commit-message
 
 # 示例 2: version.properties 中 version=x.y.z 格式
 - id: check-version
@@ -160,9 +167,12 @@ influence: 影响核心模块稳定性
 - `--version-regex`: 提取版本号的正则表达式（必需）
   - 单个捕获组：直接作为版本号
   - 多个捕获组：各组用 `.` 连接（如 `(1)(0)(0)` → `1.0.0`）
+- `--fix-commit-message`: 可选。在 `commit-msg` 阶段，提交信息中已有可识别的版本标记但与暂存区版本文件不一致时，将首个标记同步为文件版本。
 
 **说明：**
-- 运行在 `post-commit` 阶段，比较当前提交与上一个提交的版本号
+- 启用 `--fix-commit-message` 时自动同步发生在 `commit-msg` 阶段；`post-commit` 阶段只比较当前提交与上一个提交的版本号并验证
+- 自动同步只负责提交信息与版本文件的一致性，不会补充缺失版本标记、修改版本文件或修复非法版本递增
+- 启用 `--fix-commit-message` 时，rebase 过程中的 `post-commit` 校验会延迟，需由项目的 post-rewrite 版本归一化器做最终校验；该公共 hook 本身不修改 tree 或历史
 - 支持 `git commit --amend` 和 `git rebase` 场景
 - 支持任意位数的版本号（如 `1.0.0`、`1.0.0.0.1`）
 - 首次提交（无历史提交）时跳过版本递增检查
@@ -181,18 +191,45 @@ influence: 影响核心模块稳定性
 
 `--source-root` 为必填参数，且必须是相对当前工作目录的已存在目录。该 hook 使用 `always_run: true` 和 `pass_filenames: false`，因此仅修改 `.ui` 文件时也会执行检查。当推导出的 UI 路径不存在时，hook 会搜索同名 `.ui` 文件：唯一候选会报告 AUTOUIC include 路径不匹配、实际 UI 路径和完整的建议 include；没有候选会报告 UI 文件不存在；多个候选会报告歧义并列出所有候选路径。
 
+### `conan-version-merge-driver` 与 `conan-version-post-rewrite`
+
+这两个 hook 为 merge-backend rebase 集中处理 Conan 固定段数的点分非负整数版本。版本至少两段，每段不得有前导零（`0` 除外），同一次处理中的版本段数必须一致。项目通过 CMake 配置 Git merge driver，命令必须使用 pre-commit 中转：
+
+```cmake
+execute_process(
+  COMMAND git config --local merge.conan-version.driver
+    "pre-commit run conan-version-merge-driver --hook-stage manual --files %O %A %B"
+)
+execute_process(COMMAND git config --local rebase.backend merge)
+execute_process(COMMAND git config --local rebase.updateRefs false)
+```
+
+项目的 pre-commit 配置示例：
+
+```yaml
+- id: conan-version-merge-driver
+  args: [--version-regex=^\s*version\s*=\s*["'](\d+(?:\.\d+)+)["']\s*$]
+- id: conan-version-post-rewrite
+  args:
+    - --version-file=conanfile.py
+    - --version-regex=^\s*version\s*=\s*["'](\d+(?:\.\d+)+)["']\s*$
+    - --commit-message-regex=^\[feature\]\[\d+(?:\.\d+)+\] .+$
+```
+
+merge driver 接收 Git 的 `%O %A %B` 文件并覆盖 `%A`，仅支持 merge-backend rebase。一次精确递增选择一个版本段索引：此前的更高位保持不变，该段恰好加一，之后的低位全部置零。重放时保留新父提交的更高位，再按该索引递增；squash/fixup 的多个递增只应用最高位（最小索引）的一次。post-rewrite hook 使用 rebase 映射重建版本文件和提交消息，并只替换首个合法版本标记。安装时包含 `post-rewrite`：`pre-commit install --hook-type post-rewrite`。pre-commit 中转会将所有非零退出码折叠为 1；本 hook 只向 stderr 输出错误并以非零退出，不提供 FAILED 标记、guard 或恢复流程。Git 会忽略 `post-rewrite` hook 的失败，因此即使归一化失败，`git rebase` 也可能返回成功；请检查 hook 输出和最终历史。
+
 **合法的版本递增示例：**
 
 | 上一次版本 | 当前版本 | 是否合法 |
 |-----------|---------|---------|
-| 1.0.0 | 1.0.1 | ✅ |
-| 1.0.0 | 1.1.0 | ✅ |
-| 1.0.0 | 2.0.0 | ✅ |
-| 1.0.0 | 1.0.2 | ❌ 增加了 2 |
-| 1.0.0 | 1.1.1 | ❌ 高位增加后低位未置 0 |
-| 1.0.0 | 0.0.1 | ❌ 高位降低 |
-| 1.0.0.0.1 | 1.0.0.0.2 | ✅ |
-| 1.0.0.0.1 | 1.1.0.0.0 | ✅ |
+| 1.0 | 1.1 | ✅ |
+| 1.0.0.0 | 1.0.0.1 | ✅ |
+| 1.0.0.0 | 1.1.0.0 | ✅ |
+| 1.0.0.0.0 | 1.0.0.1.0 | ✅ |
+| 1.0.0.0 | 1.0.0.2 | ❌ 版本段增加了 2 |
+| 1.0.0.0 | 1.1.0.1 | ❌ 更高位增加后低位未置 0 |
+| 1.0.0.0 | 0.0.0.1 | ❌ 更高位降低 |
+| 1.0.0 | 1.0.0.0 | ❌ 版本段数变化 |
 
 ```yaml
 default_install_hook_types: [pre-commit, commit-msg, post-commit]
