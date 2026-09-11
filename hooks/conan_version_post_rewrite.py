@@ -218,7 +218,7 @@ def rebuild_commit(
     if not match:
         raise NormalizationError('commit message first line must contain [x.y[.z...]]')
     message = first[:match.start()] + f'[{version}]' + first[match.end():] + separator + remainder
-    if message_pattern and not message_pattern.fullmatch(message.rstrip('\n')):
+    if message_pattern and not message_pattern.match(message):
         raise NormalizationError('rebuilt commit message violates --commit-message-regex')
     return git.text(['hash-object', '-t', 'commit', '-w', '--stdin'], ('\n'.join(rebuilt) + '\n\n' + message).encode())
 

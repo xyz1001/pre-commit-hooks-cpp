@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from hooks import check_commit_msg
 from hooks import conan_version_merge_driver as driver
 from hooks import conan_version_post_rewrite as rewriter
 
@@ -270,7 +271,7 @@ class ConanVersionRewriteEndToEndTests(unittest.TestCase):
             self.assertEqual(1, int(run(repository.path, 'rev-list', '--count', 'master..HEAD')))
             self.assertEqual('[feature][1.2.4.0] aggregate', repository.message())
 
-    def test_default_squash_message_is_not_normalized_after_post_rewrite_failure(self) -> None:
+    def test_default_squash_message_is_normalized_after_post_rewrite(self) -> None:
         with TemporaryRepository() as repository:
             run(repository.path, 'branch', 'local')
             repository.version_commit('1.2.4', '[feature][1.2.4] remote', 'remote.txt')
@@ -278,7 +279,34 @@ class ConanVersionRewriteEndToEndTests(unittest.TestCase):
             repository.version_commit('1.2.4', '[feature][1.2.4] patch', 'patch.txt')
             repository.version_commit('1.3.0', '[feature][1.3.0] minor', 'minor.txt')
             repository.rebase(interactive=True)
-            self.assertEqual('[feature][1.2.4] patch\n\n[feature][1.3.0] minor', repository.message())
+            self.assertEqual('[feature][1.3.0] patch\n\n[feature][1.3.0] minor', repository.message())
+
+    def test_commit_message_hook_and_post_rewrite_accept_body_but_reject_invalid_subject(self) -> None:
+        message = '[feature][1.2.4] local\n\nwhy: explain the reason\nhow: explain the change\ninfluence: describe the impact\n'
+        with TemporaryRepository() as repository:
+            message_file = repository.path / 'message.txt'
+            message_file.write_text(message, encoding='utf-8')
+            self.assertEqual(0, check_commit_msg.main(['check-commit-msg', MESSAGE_REGEX, str(message_file)]))
+
+            run(repository.path, 'branch', 'local')
+            repository.version_commit('1.2.4', '[feature][1.2.4] remote', 'remote.txt')
+            run(repository.path, 'checkout', '-q', 'local')
+            repository.version_commit('1.2.4', message, 'local.txt')
+            repository.rebase()
+            self.assertEqual(
+                '[feature][1.2.5] local\n\nwhy: explain the reason\nhow: explain the change\ninfluence: describe the impact',
+                repository.message())
+
+            message_file.write_text('[bugfix][1.2.5] invalid\n', encoding='utf-8')
+            self.assertEqual(-1, check_commit_msg.main(['check-commit-msg', MESSAGE_REGEX, str(message_file)]))
+
+            invalid = repository.version_commit('1.2.6', '[bugfix][1.2.6] invalid', 'invalid.txt')
+            state = repository.path / '.git' / 'rebase-merge'
+            state.mkdir()
+            state.joinpath('done').write_text(f'pick {invalid} invalid\n', encoding='utf-8')
+            state.joinpath('orig-head').write_text(f'{invalid}\n', encoding='utf-8')
+            with self.assertRaisesRegex(rewriter.NormalizationError, 'violates --commit-message-regex'):
+                rewriter.normalize([(invalid, invalid)], 'version.txt', VERSION_REGEX, MESSAGE_REGEX, repository.path)
 
     def test_rejects_no_op_singleton_and_group(self) -> None:
         for squash in (False, True):
