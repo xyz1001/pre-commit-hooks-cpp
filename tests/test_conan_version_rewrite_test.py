@@ -115,8 +115,13 @@ class TemporaryRepository:
     def version(self) -> str:
         return self.path.joinpath('version.txt').read_text(encoding='utf-8').strip().split('=', 1)[1]
 
-    def rebase(self, interactive: bool = False, action: str = 'squash', message: str | None = None) -> None:
+    def rebase(self, interactive: bool = False, action: str = 'squash', message: str | None = None,
+               update_refs: bool | None = None) -> None:
         command = ['rebase']
+        if update_refs is True:
+            command.append('--update-refs')
+        elif update_refs is False:
+            command.append('--no-update-refs')
         environment = os.environ.copy()
         if interactive:
             editor = self.path / 'sequence_editor.py'
@@ -342,6 +347,37 @@ class ConanVersionRewriteEndToEndTests(unittest.TestCase):
             state.joinpath('rewritten-list').write_text(f'{old} {old}\n', encoding='utf-8')
             records = rewriter.mapping_records(rewriter.Git(repository.path), io.StringIO(''))
             self.assertEqual([(old, old)], records)
+
+    def test_update_refs_keeps_secondary_branch_at_git_provisional_commit(self) -> None:
+        with TemporaryRepository() as repository:
+            run(repository.path, 'branch', 'feature')
+            repository.version_commit('1.2.4', '[feature][1.2.4] remote', 'remote.txt')
+            run(repository.path, 'checkout', '-q', 'feature')
+            repository.version_commit('1.2.4', '[feature][1.2.4] first', 'first.txt')
+            run(repository.path, 'branch', 'secondary')
+            repository.version_commit('1.2.5', '[feature][1.2.5] second', 'second.txt')
+            run(repository.path, 'config', 'rebase.updateRefs', 'true')
+
+            repository.rebase()
+
+            secondary = run(repository.path, 'rev-parse', 'secondary')
+            self.assertNotEqual(repository.head(), secondary)
+            self.assertEqual('version=1.2.4', run(repository.path, 'show', f'{secondary}:version.txt'))
+            self.assertEqual('[feature][1.2.4] first', run(repository.path, 'log', '-1', '--format=%s', secondary))
+            self.assertEqual('1.2.6', repository.version())
+
+    def test_no_update_refs_override_does_not_move_secondary_branch(self) -> None:
+        with TemporaryRepository() as repository:
+            run(repository.path, 'branch', 'feature')
+            repository.version_commit('1.2.4', '[feature][1.2.4] remote', 'remote.txt')
+            run(repository.path, 'checkout', '-q', 'feature')
+            secondary = repository.version_commit('1.2.4', '[feature][1.2.4] local', 'local.txt')
+            run(repository.path, 'branch', 'secondary', secondary)
+            run(repository.path, 'config', 'rebase.updateRefs', 'true')
+
+            repository.rebase(update_refs=False)
+
+            self.assertEqual(secondary, run(repository.path, 'rev-parse', 'secondary'))
 
 
 if __name__ == '__main__':

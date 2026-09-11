@@ -48,15 +48,6 @@ class Git:
         except UnicodeDecodeError as error:
             raise NormalizationError('Git returned non-UTF-8 text') from error
 
-    def config_bool(self, key: str) -> str | None:
-        process = subprocess.run(['git', 'config', '--bool', '--get', key], cwd=self.root, capture_output=True)
-        if process.returncode == 1:
-            return None
-        if process.returncode:
-            raise NormalizationError(f'cannot read Git config {key}')
-        return process.stdout.decode('utf-8').strip()
-
-
 def git_path(git: Git, name: str) -> Path:
     path = Path(git.text(['rev-parse', '--git-path', name]))
     return path if path.is_absolute() else git.root / path
@@ -148,9 +139,18 @@ def validate_rebase_interval(git: Git, groups: list[tuple[str, list[str]]]) -> N
         if not line or line.startswith('#'):
             continue
         fields = line.split(maxsplit=2)
+        if fields[0] in {'update-ref', 'u'}:
+            if len(fields) != 2:
+                raise NormalizationError('rebase done update-ref command is malformed')
+            continue
         if len(fields) < 2 or fields[0] not in {'pick', 'p', 'squash', 's', 'fixup', 'f'}:
             raise NormalizationError('rebase done contains an unsupported command')
-        done_oids.add(git.text(['rev-parse', '--verify', f'{fields[1]}^{{commit}}']))
+        oid = fields[1]
+        if fields[0] in {'fixup', 'f'} and oid in {'-C', '-c'}:
+            if len(fields) < 3:
+                raise NormalizationError('rebase done fixup amend command is malformed')
+            oid = fields[2].split(maxsplit=1)[0]
+        done_oids.add(git.text(['rev-parse', '--verify', f'{oid}^{{commit}}']))
     if done_oids != expected:
         raise NormalizationError('mapped old commits do not exactly match rebase done')
     current = orig_head.read_text(encoding='utf-8').strip()
@@ -162,14 +162,6 @@ def validate_rebase_interval(git: Git, groups: list[tuple[str, list[str]]]) -> N
         current = commit_parent(git, current)
     if walked != expected:
         raise NormalizationError('mapped old commits are not the complete orig-head interval')
-
-
-def update_refs_pending(git: Git) -> bool:
-    for name in ('rebase-merge/update-refs', 'rebase-apply/update-refs'):
-        path = git_path(git, name)
-        if path.exists() and path.read_text(encoding='utf-8').strip():
-            return True
-    return False
 
 
 def tree_with_version(
@@ -241,8 +233,6 @@ def normalize(
     except re.error as error:
         raise NormalizationError(f'invalid commit-message regex: {error}') from error
     groups = group_mappings(records)
-    if git.config_bool('rebase.updateRefs') == 'true' or update_refs_pending(git):
-        raise NormalizationError('rebase.updateRefs must be false')
     validate_rebase_interval(git, groups)
     tip = records[-1][1]
     branch = git.text(['symbolic-ref', '-q', 'HEAD'])
