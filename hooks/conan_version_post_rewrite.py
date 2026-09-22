@@ -136,20 +136,45 @@ def validate_rebase_interval(git: Git, groups: list[tuple[str, list[str]]]) -> N
     expected = {old for _, olds in groups for old in olds}
     done_oids = set()
     for line in done.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
         if not line or line.startswith('#'):
             continue
         fields = line.split(maxsplit=2)
-        if fields[0] in {'update-ref', 'u'}:
+        command = fields[0]
+        if command in {'label', 'l', 'reset', 't', 'merge', 'm'}:
+            raise NormalizationError('rebase --rebase-merges is unsupported')
+        if command in {'update-ref', 'u'}:
             if len(fields) != 2:
                 raise NormalizationError('rebase done update-ref command is malformed')
             continue
-        if len(fields) < 2 or fields[0] not in {'pick', 'p', 'squash', 's', 'fixup', 'f'}:
+        if command in {'exec', 'x'}:
+            if len(fields) < 2:
+                raise NormalizationError('rebase done exec command is malformed')
+            continue
+        if command in {'break', 'b'}:
+            if len(fields) != 1:
+                raise NormalizationError('rebase done break command is malformed')
+            continue
+        if command == 'noop':
+            if len(fields) != 1:
+                raise NormalizationError('rebase done noop command is malformed')
+            continue
+        if command in {'drop', 'd'}:
+            if len(fields) < 2 or not OID.fullmatch(fields[1]):
+                raise NormalizationError('rebase done drop command is malformed')
+            git.text(['rev-parse', '--verify', f'{fields[1]}^{{commit}}'])
+            continue
+        if command not in {'pick', 'p', 'reword', 'r', 'edit', 'e', 'squash', 's', 'fixup', 'f'}:
             raise NormalizationError('rebase done contains an unsupported command')
+        if len(fields) < 2:
+            raise NormalizationError('rebase done commit command is malformed')
         oid = fields[1]
-        if fields[0] in {'fixup', 'f'} and oid in {'-C', '-c'}:
+        if command in {'fixup', 'f'} and oid in {'-C', '-c'}:
             if len(fields) < 3:
                 raise NormalizationError('rebase done fixup amend command is malformed')
             oid = fields[2].split(maxsplit=1)[0]
+        if not OID.fullmatch(oid):
+            raise NormalizationError('rebase done commit command has an invalid commit OID')
         done_oids.add(git.text(['rev-parse', '--verify', f'{oid}^{{commit}}']))
     if done_oids != expected:
         raise NormalizationError('mapped old commits do not exactly match rebase done')

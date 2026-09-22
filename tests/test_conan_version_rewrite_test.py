@@ -117,7 +117,7 @@ class TemporaryRepository:
         return self.path.joinpath('version.txt').read_text(encoding='utf-8').strip().split('=', 1)[1]
 
     def rebase(self, interactive: bool = False, action: str = 'squash', message: str | None = None,
-               update_refs: bool | None = None) -> None:
+               update_refs: bool | None = None, exec_command: str | None = None) -> None:
         command = ['rebase']
         if update_refs is True:
             command.append('--update-refs')
@@ -144,6 +144,8 @@ class TemporaryRepository:
                     encoding='utf-8')
                 environment['GIT_EDITOR'] = f'{sys.executable} {editor}'
             command.append('-i')
+        if exec_command is not None:
+            command.extend(['--exec', exec_command])
         run(self.path, *command, 'master', env=environment)
 
 
@@ -203,6 +205,71 @@ class ConanVersionMergeDriverTests(unittest.TestCase):
 
 
 class ConanVersionRewriteEndToEndTests(unittest.TestCase):
+    def validate_done(self, repository: TemporaryRepository, done: str, old: str | None = None) -> None:
+        old = old or repository.head()
+        state = repository.path / '.git' / 'rebase-merge'
+        state.mkdir()
+        state.joinpath('done').write_text(done, encoding='utf-8')
+        state.joinpath('orig-head').write_text(f'{old}\n', encoding='utf-8')
+        rewriter.validate_rebase_interval(rewriter.Git(repository.path), [(old, [old])])
+
+    def test_reword_and_edit_commands_are_commit_bearing(self) -> None:
+        for command in ('reword', 'r', 'edit', 'e'):
+            with self.subTest(command=command), TemporaryRepository() as repository:
+                old = repository.version_commit('1.2.4', '[feature][1.2.4] local', 'local.txt')
+                self.validate_done(repository, f'{command} {old} local\n', old)
+
+    def test_done_accepts_linear_interactive_rebase_commands(self) -> None:
+        with TemporaryRepository() as repository:
+            old = repository.version_commit('1.2.4', '[feature][1.2.4] local', 'local.txt')
+            base = run(repository.path, 'rev-parse', f'{old}^')
+            self.validate_done(
+                repository,
+                f'  # completed command\n\n'
+                f'pick {old} local\n'
+                'exec arbitrary shell && syntax $is_allowed\n'
+                'x true\n'
+                'break\n'
+                'b\n'
+                f'drop {base} base\n'
+                f'd {base}\n'
+                'noop\n'
+                'update-ref refs/heads/secondary\n'
+                'u refs/heads/another-secondary\n',
+                old)
+
+    def test_done_rejects_malformed_and_unknown_commands(self) -> None:
+        malformed = (
+            ('pick', 'commit command is malformed'),
+            ('fixup -C', 'fixup amend command is malformed'),
+            ('exec', 'exec command is malformed'),
+            ('break unexpected', 'break command is malformed'),
+            ('drop not-an-oid', 'drop command is malformed'),
+            ('noop unexpected', 'noop command is malformed'),
+            ('update-ref', 'update-ref command is malformed'),
+            ('unknown command', 'unsupported command'),
+        )
+        for done, error in malformed:
+            with self.subTest(done=done), TemporaryRepository() as repository:
+                old = repository.version_commit('1.2.4', '[feature][1.2.4] local', 'local.txt')
+                state = repository.path / '.git' / 'rebase-merge'
+                state.mkdir()
+                state.joinpath('done').write_text(f'{done}\n', encoding='utf-8')
+                state.joinpath('orig-head').write_text(f'{old}\n', encoding='utf-8')
+                with self.assertRaisesRegex(rewriter.NormalizationError, error):
+                    rewriter.validate_rebase_interval(rewriter.Git(repository.path), [(old, [old])])
+
+    def test_done_rejects_rebase_merges_commands(self) -> None:
+        for command in ('label branch', 'l branch', 'reset branch', 't branch', 'merge branch', 'm branch'):
+            with self.subTest(command=command), TemporaryRepository() as repository:
+                old = repository.version_commit('1.2.4', '[feature][1.2.4] local', 'local.txt')
+                state = repository.path / '.git' / 'rebase-merge'
+                state.mkdir()
+                state.joinpath('done').write_text(f'{command}\n', encoding='utf-8')
+                state.joinpath('orig-head').write_text(f'{old}\n', encoding='utf-8')
+                with self.assertRaisesRegex(rewriter.NormalizationError, 'rebase --rebase-merges is unsupported'):
+                    rewriter.validate_rebase_interval(rewriter.Git(repository.path), [(old, [old])])
+
     def prepare_branches(self, remote: str, local: str, base: str = '1.2.3') -> TemporaryRepository:
         repository = TemporaryRepository(base).__enter__()
         self.addCleanup(repository.__exit__, None, None, None)
@@ -246,6 +313,13 @@ class ConanVersionRewriteEndToEndTests(unittest.TestCase):
         repository.rebase()
         self.assertEqual('1.2.5', repository.version())
         self.assertEqual('[feature][1.2.5] local', repository.subject())
+
+    def test_interactive_rebase_exec_normalizes_version_file_and_message(self) -> None:
+        repository = self.prepare_branches('1.2.4', '1.2.4')
+        repository.rebase(interactive=True, exec_command='true')
+        self.assertEqual('1.2.5', repository.version())
+        self.assertEqual('[feature][1.2.5] local', repository.subject())
+        self.assertTrue(repository.path.joinpath('local.txt').exists())
 
     def test_squash_patch_and_minor_uses_highest_bump_once(self) -> None:
         with TemporaryRepository() as repository:
