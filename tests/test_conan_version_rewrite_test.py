@@ -150,6 +150,28 @@ class TemporaryRepository:
 
 
 class ConanVersionMergeDriverTests(unittest.TestCase):
+    def test_unchanged_theirs_version_preserves_ours_and_merges_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ('base', 'ours', 'theirs')]
+            contents = (
+                'version=1.7.2\n\ndependency=bsdevice/1.0.0\n',
+                'version=1.6.16\n\ndependency=bsdevice/1.0.0\n',
+                'version=1.7.2\n\ndependency=bsdevice/1.0.1\n',
+            )
+            for path, content in zip(paths, contents):
+                path.write_text(content, encoding='utf-8')
+            self.assertEqual(driver.SUCCESS, driver.merge_files(*map(str, paths), driver.VersionCodec(VERSION_REGEX)))
+            self.assertEqual('version=1.6.16\n\ndependency=bsdevice/1.0.1\n', paths[1].read_text(encoding='utf-8'))
+
+    def test_rejects_lower_ours_when_theirs_changes_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ('base', 'ours', 'theirs')]
+            for path, version in zip(paths, ('1.7.2', '1.6.16', '1.7.3')):
+                path.write_text(f'version={version}\n', encoding='utf-8')
+            with mock.patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                self.assertEqual(driver.ERROR, driver.merge_files(*map(str, paths), driver.VersionCodec(VERSION_REGEX)))
+            self.assertIn('ours version is lower than base version', stderr.getvalue())
+
     def test_rejects_invalid_versions_and_non_version_conflicts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

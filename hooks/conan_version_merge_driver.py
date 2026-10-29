@@ -88,9 +88,12 @@ def merge_files(
         ours_version = codec.version_from(ours, 'ours')
         theirs_version = codec.version_from(theirs, 'theirs')
         require_same_segment_count(base_version, ours_version, theirs_version)
-        if ours_version < base_version:
-            raise VersionError('ours version is lower than base version')
-        version = '.'.join(map(str, apply_bump(ours_version, bump_kind(base_version, theirs_version))))
+        if theirs_version == base_version:
+            version = '.'.join(map(str, ours_version))
+        else:
+            if ours_version < base_version:
+                raise VersionError('ours version is lower than base version')
+            version = '.'.join(map(str, apply_bump(ours_version, bump_kind(base_version, theirs_version))))
         placeholder = '.'.join('0' for _ in base_version)
         base = codec.replace(base, placeholder)
         ours = codec.replace(ours, placeholder)
