@@ -135,6 +135,7 @@ def validate_rebase_interval(git: Git, groups: list[tuple[str, list[str]]]) -> N
         raise NormalizationError('merge-backend rebase done or orig-head state is unavailable')
     expected = {old for _, olds in groups for old in olds}
     done_oids = set()
+    done_commits = []
     for line in done.read_text(encoding='utf-8').splitlines():
         line = line.strip()
         if not line or line.startswith('#'):
@@ -175,9 +176,26 @@ def validate_rebase_interval(git: Git, groups: list[tuple[str, list[str]]]) -> N
             oid = fields[2].split(maxsplit=1)[0]
         if not OID.fullmatch(oid):
             raise NormalizationError('rebase done commit command has an invalid commit OID')
-        done_oids.add(git.text(['rev-parse', '--verify', f'{oid}^{{commit}}']))
+        oid = git.text(['rev-parse', '--verify', f'{oid}^{{commit}}'])
+        done_oids.add(oid)
+        done_commits.append(oid)
     if done_oids != expected:
-        raise NormalizationError('mapped old commits do not exactly match rebase done')
+        prefix = []
+        for oid in done_commits:
+            if oid in expected:
+                break
+            prefix.append(oid)
+        if (not prefix or set(done_commits[len(prefix):]) != expected
+                or set(prefix) != done_oids - expected
+                or done_commits[len(prefix)] != groups[0][1][0]):
+            raise NormalizationError('mapped old commits do not exactly match rebase done')
+        parent = commit_parent(git, groups[0][1][0])
+        if commit_parent(git, groups[0][0]) != parent:
+            raise NormalizationError('mapped old commits do not exactly match rebase done')
+        for oid in reversed(prefix):
+            if oid != parent:
+                raise NormalizationError('mapped old commits do not exactly match rebase done')
+            parent = commit_parent(git, oid)
     current = orig_head.read_text(encoding='utf-8').strip()
     walked = set()
     while current in expected:

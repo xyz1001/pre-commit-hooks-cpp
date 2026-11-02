@@ -292,6 +292,22 @@ class ConanVersionRewriteEndToEndTests(unittest.TestCase):
                 with self.assertRaisesRegex(rewriter.NormalizationError, 'rebase --rebase-merges is unsupported'):
                     rewriter.validate_rebase_interval(rewriter.Git(repository.path), [(old, [old])])
 
+    def test_done_rejects_missing_non_prefix_and_unproven_prefix(self) -> None:
+        with TemporaryRepository() as repository:
+            first = repository.version_commit('1.2.4', '[feature][1.2.4] first', 'first.txt')
+            second = repository.version_commit('1.2.5', '[feature][1.2.5] second', 'second.txt')
+            third = repository.version_commit('1.2.6', '[feature][1.2.6] third', 'third.txt')
+            state = repository.path / '.git' / 'rebase-merge'
+            state.mkdir()
+            state.joinpath('done').write_text(
+                f'pick {first} first\npick {second} second\npick {third} third\n', encoding='utf-8')
+            state.joinpath('orig-head').write_text(f'{third}\n', encoding='utf-8')
+            git = rewriter.Git(repository.path)
+            for groups in ([(first, [first]), (third, [third])], [(third, [second]), (third, [third])]):
+                with self.subTest(groups=groups):
+                    with self.assertRaisesRegex(rewriter.NormalizationError, 'mapped old commits do not exactly match'):
+                        rewriter.validate_rebase_interval(git, groups)
+
     def prepare_branches(self, remote: str, local: str, base: str = '1.2.3') -> TemporaryRepository:
         repository = TemporaryRepository(base).__enter__()
         self.addCleanup(repository.__exit__, None, None, None)
@@ -461,6 +477,28 @@ class ConanVersionRewriteEndToEndTests(unittest.TestCase):
             repository.commit('fixup! [feature][1.2.4] patch')
             repository.rebase(interactive=True, action='fixup')
             self.assertEqual('1.2.5', repository.version())
+            self.assertTrue(repository.path.joinpath('fixup.txt').exists())
+
+    def test_autosquash_reuses_prefix_and_normalizes_message(self) -> None:
+        with TemporaryRepository() as repository:
+            run(repository.path, 'branch', 'local')
+            run(repository.path, 'checkout', '-q', 'local')
+            first = repository.version_commit('1.2.4', '[feature][1.2.4] first', 'first.txt')
+            repository.version_commit('1.2.5', '[feature][1.9.9] target', 'target.txt')
+            repository.path.joinpath('fixup.txt').write_text('fixup\n', encoding='utf-8')
+            repository.commit('fixup! [feature][1.9.9] target')
+            environment = os.environ.copy()
+            environment.update(GIT_SEQUENCE_EDITOR='true', GIT_EDITOR='true')
+            result = subprocess.run(
+                ['git', 'rebase', '-i', '--autosquash', 'master'], cwd=repository.path,
+                env=environment, capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertNotIn('conan-version post-rewrite:', result.stderr)
+            self.assertNotIn('Failed', result.stdout + result.stderr)
+            self.assertIn('centralized post rewrite', result.stdout + result.stderr)
+            self.assertEqual(first, run(repository.path, 'rev-parse', 'HEAD^'))
+            self.assertEqual('1.2.5', repository.version())
+            self.assertEqual('[feature][1.2.5] target', repository.subject())
             self.assertTrue(repository.path.joinpath('fixup.txt').exists())
 
     def test_empty_stdin_uses_rewritten_list(self) -> None:
